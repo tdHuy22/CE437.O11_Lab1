@@ -21,11 +21,23 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h> // sprintf
+#include <string.h> // strlen
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef enum{
+  RESET_BTN,
+  WAIT,
+  ARMING,
+  ARMED,
+  DRAWN,
+  TRIGGER,
+  HOLD,
+  LOW_WAIT
+}button_state_t;
+
 typedef enum{
   mode1,
   mode2,
@@ -48,7 +60,7 @@ typedef enum{
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define DEBUG 1
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -62,15 +74,37 @@ TIM_HandleTypeDef htim3;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
+button_state_t state_button1_t = RESET_BTN;
+button_state_t state_button2_t = RESET_BTN;
+button_state_t pre_state_button1_t = RESET_BTN;
+button_state_t pre_state_button2_t = RESET_BTN;
+GPIO_PinState state_button1 = GPIO_PIN_SET;
+GPIO_PinState state_button2 = GPIO_PIN_SET;
+uint32_t t_s1 = 0;
+uint32_t t_s2 = 0;
+uint32_t t_0_s1 = 0;
+uint32_t t_0_s2 = 0;
+uint32_t t_diff_s1 = 0;
+uint32_t t_diff_s2 = 0;
+uint32_t t_press_s1 = 0;
+uint32_t t_press_s2 = 0;
+uint32_t bounce_delay_s = 50;
+uint32_t hold_delay_s = 500;
+
 uint8_t initialled1 = 1;
 
 uint32_t tim3scaler = 7200 - 1;
-uint32_t tim3period = 2000 - 1;
+uint32_t tim3period = 10000 - 1;
 
 
 ledmode_t stateofled = mode1;
 ledmode2 mode2forled = state1mode2;
 ledmode3 mode3forled = state1mode3;
+
+uint8_t ishold1 = 0;
+uint8_t ishold2 = 0;
+
+uint8_t message[35] = {'\0'};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -196,6 +230,208 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     SM_ledmode();
   }
 }
+
+void SM_button1(void){
+  state_button1 = HAL_GPIO_ReadPin(button1_GPIO_Port, button1_Pin);
+  pre_state_button1_t = state_button1_t;
+  switch(state_button1_t){
+    case RESET_BTN:
+      state_button1_t = WAIT;
+      break;
+    case WAIT:
+      if (state_button1 == GPIO_PIN_RESET){
+        state_button1_t = ARMING;
+      }
+      break;
+    case ARMING:
+      t_0_s1 = HAL_GetTick();
+      state_button1_t = ARMED;
+      break;
+    case ARMED:
+      t_s1 = HAL_GetTick();
+      t_diff_s1 = t_s1 - t_0_s1;
+      if (state_button1 == GPIO_PIN_SET){
+        state_button1_t = RESET_BTN;
+      }
+      if(t_diff_s1 > bounce_delay_s){
+        state_button1_t = DRAWN;
+      }
+      break;
+    case DRAWN:
+      t_s1 = HAL_GetTick();
+      t_diff_s1 = t_s1 - t_0_s1;
+      if (state_button1 == GPIO_PIN_SET){
+        state_button1_t = TRIGGER;
+      }
+      if (t_diff_s1 > hold_delay_s){
+        state_button1_t = HOLD;
+      }
+      break;
+    case TRIGGER:
+      state_button1_t = RESET_BTN;
+      break;
+    case HOLD:
+      state_button1_t = LOW_WAIT;
+      break;
+    case LOW_WAIT:
+      if (state_button1 == GPIO_PIN_SET){
+        t_s1 = HAL_GetTick();
+        t_press_s1 = t_s1 - t_0_s1;
+        state_button1_t = RESET_BTN;
+      }
+      break;
+    default:
+    break;
+  }
+}
+
+void SM_button2(void){
+  state_button2 = HAL_GPIO_ReadPin(button2_GPIO_Port, button2_Pin);
+  pre_state_button2_t = state_button2_t;
+  switch(state_button2_t){
+    case RESET_BTN:
+      state_button2_t = WAIT;
+      break;
+    case WAIT:
+      if (state_button2 == GPIO_PIN_RESET){
+        state_button2_t = ARMING;
+      }
+      break;
+    case ARMING:
+      t_0_s2 = HAL_GetTick();
+      state_button2_t = ARMED;
+      break;
+    case ARMED:
+      t_s2 = HAL_GetTick();
+      t_diff_s2 = t_s2 - t_0_s2;
+      if (state_button2 == GPIO_PIN_SET){
+        state_button2_t = RESET_BTN;
+      }
+      if(t_diff_s2 > bounce_delay_s){
+        state_button2_t = DRAWN;
+      }
+      break;
+    case DRAWN:
+      t_s2 = HAL_GetTick();
+      t_diff_s2 = t_s2 - t_0_s2;
+      if (state_button2 == GPIO_PIN_SET){
+        state_button2_t = TRIGGER;
+      }
+      if (t_diff_s2 > hold_delay_s){
+        state_button2_t = HOLD;
+      }
+      break;
+    case TRIGGER:
+      state_button2_t = RESET_BTN;
+      break;
+    case HOLD:
+      state_button2_t = LOW_WAIT;
+      break;
+    case LOW_WAIT:
+      if (state_button2 == GPIO_PIN_SET){
+        t_s2 = HAL_GetTick();
+        t_press_s2 = t_s2 - t_0_s2;
+        state_button2_t = RESET_BTN;
+      }
+      break;
+    default:
+    break;
+  }
+}
+
+void print_uart(char *message){
+  HAL_UART_Transmit(&huart1, (uint8_t*)message, strlen(message), 100);
+}
+
+void button1_pressed(void){
+  if (HAL_TIM_Base_Stop_IT(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_Base_DeInit(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if(tim3period == 999){
+    tim3period = 20000 - 1;
+  }else{
+    tim3period -= 1000;
+  }
+  MX_TIM3_Init();
+  if (HAL_TIM_Base_Start_IT(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sprintf((char*)message, "Period of timer 3: %ld\r\n", tim3period);
+  print_uart((char*)message);
+  print_uart("BUTTON1_TRIGGERED!\r\n");
+}
+
+void button1_holdtime(void){
+  if(ishold1 != 0){
+    uint8_t divsion_time = t_press_s1 / 200;
+    uint16_t decrease_time = divsion_time * 1000;
+    if (HAL_TIM_Base_Stop_IT(&htim3) != HAL_OK)
+    {
+      Error_Handler();
+    }
+    if (HAL_TIM_Base_DeInit(&htim3) != HAL_OK)
+    {
+      Error_Handler();
+    }
+    if((int)tim3period - (int)decrease_time > 0){
+      tim3period -= decrease_time;
+    }else{
+      tim3period = 20000 - 1;
+    }
+    MX_TIM3_Init();
+    if (HAL_TIM_Base_Start_IT(&htim3) != HAL_OK)
+    {
+      Error_Handler();
+    }
+    sprintf((char*)message, "Period of timer 3: %ld\r\n", tim3period);
+    print_uart((char*)message);
+    sprintf((char*)message, "Time pressing button: %ld\r\n", t_press_s1);
+    print_uart((char*)message);
+  }      
+  ishold1 = 0;
+}
+
+void button2_pressed(void){
+  changemodeled();
+  print_uart("BUTTON2_TRIGGERED!\r\n");
+}
+
+void button2_holdtime(void){
+  if(ishold2 != 0){
+    uint8_t divsion_time = t_press_s2 / 200;
+    uint16_t increase_time = divsion_time * 1000;
+    if (HAL_TIM_Base_Stop_IT(&htim3) != HAL_OK)
+    {
+      Error_Handler();
+    }
+    if (HAL_TIM_Base_DeInit(&htim3) != HAL_OK)
+    {
+      Error_Handler();
+    }
+    if(tim3period + increase_time > 20000 - 1){
+      tim3period = 20000 - 1;
+    }else{
+      tim3period += increase_time;
+    }  
+    MX_TIM3_Init();
+    if (HAL_TIM_Base_Start_IT(&htim3) != HAL_OK)
+    {
+      Error_Handler();
+    }
+    sprintf((char*)message, "Period of timer 3: %ld\r\n", tim3period);
+    print_uart((char*)message);
+    sprintf((char*)message, "Time pressing button: %ld\r\n", t_press_s2);
+    print_uart((char*)message);
+  }      
+  ishold2 = 0;
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -205,7 +441,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-
+  
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -214,7 +450,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -229,7 +465,10 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-  HAL_TIM_Base_Start_IT(&htim3);
+  if (HAL_TIM_Base_Start_IT(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }  
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -239,6 +478,42 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    SM_button1();
+    SM_button2();
+    if (state_button1_t == TRIGGER){
+      button1_pressed();
+    }
+    if (state_button1_t == HOLD){
+      print_uart("BUTTON1_HOLD!\r\n");
+      ishold1 = 1;
+    }
+    if (state_button1_t == RESET_BTN){
+      button1_holdtime();
+    }
+
+    if (state_button2_t == TRIGGER){
+      button2_pressed();
+    }
+    if (state_button2_t == HOLD){
+      print_uart("BUTTON2_HOLD!\r\n");
+      ishold2 = 1;
+    }
+    if (state_button2_t == RESET_BTN){
+      button2_holdtime();
+    }
+
+    if (DEBUG){
+      if(pre_state_button1_t != state_button1_t){
+        sprintf((char*)message, "State Of Button1: %d\r\n", state_button1_t);
+        print_uart((char*)message);
+      }
+
+      if(pre_state_button2_t != state_button2_t){
+        sprintf((char*)message, "State Of Button2: %d\r\n", state_button2_t);
+        print_uart((char*)message);
+      }
+    }
+    
   }
   /* USER CODE END 3 */
 }
@@ -422,7 +697,8 @@ void Error_Handler(void)
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
-  {
+  { 
+    print_uart("ERROR!\r\n");
   }
   /* USER CODE END Error_Handler_Debug */
 }
